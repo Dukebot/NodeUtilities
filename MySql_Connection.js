@@ -4,9 +4,9 @@ const Environment      = require('../Core/Environment');
 
 
 const DatabaseSettings = {
-    host    : '192.168.1.175',
-    user    : 'developers',
-    password: 'm0squ1t069'
+    host    : 'IP',
+    user    : 'user',
+    password: 'pass'
 };
 
 
