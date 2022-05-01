@@ -1,0 +1,161 @@
+const Utils = require('./utils');
+
+const ROOT_PATH = '../';
+const DATABASE_PATH = 'data/database/';
+const MODEL_PATH = 'src/model/';
+
+const ERROR = Object.freeze({
+    MESSAGES: Object.freeze({
+        TABLE_DONT_EXISTS: (table_name) => "The table don't exists: " + table_name,
+        TABLE_ALREADY_EXISTS: (table_name) => "The table already exists: " + table_name,
+        WRONG_ITEM_TYPE: (table_name) => "Wrong item type provided for this table: " + table_name,
+        NO_ID_PROVIDED: () => "No id was provided",
+        ITEM_DONT_EXISTS: (table_name, id) => "The item in " + table_name + " don't exists for the id " + id + ".",
+        ITEM_ALREADY_EXISTS: (table_name, id) => "The item in " + table_name + " already exists for the id " + id + ".",
+    }),
+    TABLE_DONT_EXISTS: (table_name) =>  {
+        throw new Error(ERROR.MESSAGES.TABLE_DONT_EXISTS(table_name));
+    },
+    TABLE_ALREADY_EXISTS: (table_name) => {
+        throw new Error(ERROR.MESSAGES.TABLE_ALREADY_EXISTS(table_name));
+    },
+    WRONG_ITEM_TYPE: (table_name) => {
+        throw new Error(ERROR.MESSAGES.WRONG_ITEM_TYPE(table_name));
+    },
+    NO_ID_PROVIDED: () => {
+        throw new Error(ERROR.MESSAGES.NO_ID_PROVIDED());
+    },
+    ITEM_DONT_EXISTS: (table_name, id) => {
+        throw new Error(ERROR.MESSAGES.ITEM_DONT_EXISTS(table_name, id));
+    },
+    ITEM_ALREADY_EXISTS: (table_name, id) => {
+        throw new Error(ERROR.MESSAGES.ITEM_ALREADY_EXISTS(table_name, id));
+    },
+});
+
+const getTablePath = (table_name) => DATABASE_PATH + table_name + '.json';
+const getTableData = (table_name) => require(ROOT_PATH + getTablePath(table_name));
+
+const JsonDatabase = {
+    tableExists(table_name) {
+        if (typeof table_name !== 'string') throw new Error("Must provide a string value as table name.");
+        return Utils.fileExists(getTablePath(table_name));
+    },
+    createTable(table_name) {
+        if (!this.tableExists(table_name)) ERROR.TABLE_DONT_EXISTS(table_name);
+        Utils.createJson(getTablePath(table_name), []);
+    },
+    createTables(table_names) {
+        for (const table_name of table_names) {
+            this.createTable(table_name);
+        }
+    },
+    dropTable(table_name) {
+        if (!this.tableExists(table_name)) ERROR.TABLE_DONT_EXISTS(table_name);
+        Utils.deleteFile(getTablePath(table_name));
+    },
+    dropTables(table_names) {
+        for (const table_name of table_names) {
+            this.dropTable(table_name);
+        }
+    },
+    truncateTable(table_name) {
+        if (!this.tableExists(table_name)) ERROR.TABLE_DONT_EXISTS(table_name);
+        Utils.createJson(getTablePath(table_name), []);
+    },
+    cleanTable(table_name) {
+        if (!this.tableExists(table_name)) ERROR.TABLE_DONT_EXISTS(table_name);
+        let table_data = getTableData(table_name);
+        table_data = table_data.filter(item => !!item);
+        Utils.createJson(getTablePath(table_name), table_data);
+    },
+    get(table_name) {
+        if (!this.tableExists(table_name)) ERROR.TABLE_DONT_EXISTS(table_name);
+        return getTableData(table_name);
+    },
+    create(table_name, item) {
+        if (!this.tableExists(table_name)) ERROR.TABLE_DONT_EXISTS(table_name);
+
+        const table_data = getTableData(table_name);
+        const { i, id_max } = getItemIndex(table_data, item);
+
+        if (i < table_data.length) ERROR.ITEM_ALREADY_EXISTS(table_name, item.id);
+        if (!item.id) item.id = id_max + 1;
+
+        table_data.push(item);
+        Utils.createJson(getTablePath(table_name), table_data);
+
+        return item;
+    },
+    update(table_name, item, replace_item) {
+        if (!this.tableExists(table_name)) ERROR.TABLE_DONT_EXISTS(table_name);
+        if (!item) throw new Error("Must provide an item to update!");
+        if (!item.id) throw new Error("Must provide an item id for updating!");
+
+        const table_data = getTableData(table_name);
+        const i = table_data.findIndex(_item => _item.id === item.id);
+            
+        if (i === -1) ERROR.ITEM_DONT_EXISTS(table_name, item.id);
+        
+        item = updateItem(table_data, item, i, replace_item);
+        
+        Utils.createJson(getTablePath(table_name), table_data);
+        return item;
+    },
+    save(table_name, item, replace_item) {
+        if (!this.tableExists(table_name)) ERROR.TABLE_DONT_EXISTS(table_name);
+        if (!item) throw new Error("Must provide an item to save!");
+
+        const table_data = getTableData(table_name);
+        const { i, id_max } = getItemIndex(table_data, item);
+
+        if (i === table_data.length) {
+            if (!item.id) item.id = id_max + 1;
+            table_data.push(item);
+        } else {
+            item = updateItem(table_data, item, i, replace_item);
+        }
+
+        Utils.createJson(getTablePath(table_name), table_data);
+        return item;
+    },
+    delete(table_name, item_id) {
+        if (!this.tableExists(table_name)) ERROR.TABLE_DONT_EXISTS(table_name);
+
+        let table_data = getTableData(table_name);
+        let item_to_delete = table_data.find(item => item.id === item_id);
+        
+        if (!item_to_delete) ERROR.ITEM_DONT_EXISTS(table_name, item.id);
+        
+        table_data = table_data.filter(item => item.id !== item_to_delete.id);
+
+        Utils.createJson(getTablePath(table_name), table_data);
+    }
+};
+
+function getItemIndex(table_data, item) {
+    let i;
+    let id_max = 0;
+    for (i = 0; i < table_data.length; i++) {
+        const _item = table_data[i];
+        if (+_item.id > id_max) id_max = +_item.id;
+        if (_item.id === item.id) break;
+    }
+    return { i, id_max };
+}
+
+function updateItem(table_data, item, i, replace_item = false) {
+    if (replace_item) {
+        table_data[i] = item;
+    } else {
+        const _item = table_data[i];
+        for (const property in item) {
+            // if (item[property] !== undefined)
+            _item[property] = item[property];
+        }
+        item = _item;
+    }
+    return item;
+}
+
+module.exports = JsonDatabase;
