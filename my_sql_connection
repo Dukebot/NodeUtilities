@@ -1,0 +1,217 @@
+const MySQL = require('mysql');
+
+const DATABASE_SETTINGS = Object.freeze({
+    host: 'localhost',
+    user: 'root',
+    password: '',
+    database: 'database_name',
+});
+
+class MySqlConnection {
+
+    constructor(database_settings) {
+        this.connection = null;
+        if (!database_settings) database_settings = DATABASE_SETTINGS;
+        this.connect(database_settings);
+    }
+
+    connect(database_settings) {
+        if (this.connection) throw new Error("Already connected to the database");
+        console.log("Connection to database...", database_settings);
+        this.connection = MySQL.createConnection(database_settings);
+    }
+    disconnect() {
+        if (this.connection) {
+            this.connection.end();
+            this.connection = null;
+            console.log("Connection to database closed...");
+        } else {
+            throw new Error("Connection was already closed");
+        }
+    }
+
+    query(sentence) {
+        if (!this.connection) throw new Error("Can't query without opening a new connection");
+
+        // console.log("Query sentence -> " + sentence);
+
+        return new Promise((resolve) => {
+            this.connection.query(sentence, (error, response) => {
+                if (error) throw error;
+                return resolve(response);
+            });
+        });
+    }
+    static query(sentence) {
+        const mySqlCon = new MySqlConnection();
+
+        return mySqlCon.query(sentence).then(response => {
+            mySqlCon.disconnect();
+            return response;
+        }).catch(error => {
+            mySqlCon.disconnect();
+            throw error;
+        });
+    }
+
+    createTable(table_name, columns) {
+        return this.query(SqlQueryBuilder.createTable(table_name, columns));
+    }
+    static createTable(table_name, options) {
+        return MySqlConnection.query(SqlQueryBuilder.createTable(table_name, options));
+    }
+
+    get(table, columns, where) {
+        return this.query(SqlQueryBuilder.select(table, columns, where));
+    }
+    static get(table, columns, where) {
+        return MySqlConnection.query(SqlQueryBuilder.select(table, columns, where));
+    }
+
+    create(table, object) {
+        return this.query(SqlQueryBuilder.insert(table, object));
+    }
+    static create(table, object) {
+        return MySqlConnection(SqlQueryBuilder.insert(table, object));
+    }
+
+    update(table, values, where) {
+        return this.query(SqlQueryBuilder.update(table, values, where));
+    }
+    static update(table, values, where) {
+        return MySqlConnection.query(SqlQueryBuilder.update(table, values, where));
+    }
+
+    delete(table, where) {
+        return this.query(SqlQueryBuilder.delete(table, where));
+    }
+    static delete(table, where) {
+        return MySqlConnection.query(SqlQueryBuilder.delete(table, where));
+    }
+
+    drop(table) {
+        return this.query(SqlQueryBuilder.drop(table));
+    }
+    static drop(table) {
+        return MySqlConnection.query(SqlQueryBuilder.drop(table));
+    }
+
+    truncate(table) {
+        return this.query(SqlQueryBuilder.truncate(table));
+    }
+    static truncate(table) {
+        return MySqlConnection.query(SqlQueryBuilder.truncate(table));
+    }
+}
+
+const SqlQueryBuilder = {
+    createSchema(name) {
+        return 'CREATE SCHEMA IF NOT EXISTS `' + name + '` DEFAULT CHARACTER SET utf8mb4 ;';
+    },
+    dropTable(table) {
+        return `DROP TABLE IF EXISTS ${table};`
+    },
+    truncateTable(table) {
+        return `TRUNCATE TABLE ${table}`;
+    },
+    select(table, columns = ["*"], where = false) {
+        if (typeof columns === 'string') columns = [columns];
+
+        let colsToGet = "";
+        for (const col of columns) {
+            if (colsToGet !== "") colsToGet += ", ";
+            colsToGet += col;
+        }
+
+        let query = "SELECT " + colsToGet + " FROM " + table;
+        if (where) query += " WHERE " + this.where(where);
+
+        return query;
+    },
+    insert(table, object) {
+        let colsToInsert = "";
+        let valuesToInsert = "";
+
+        for (const key in object) {
+            if (colsToInsert !== "") colsToInsert += ", ";
+            if (valuesToInsert !== "") valuesToInsert += ", ";
+
+            colsToInsert += '`' + key + '`';
+
+            let value = object[key];
+            if (value !== null) {
+                // Cuando el string contiene ' hace petar la SQL
+                if (typeof value === 'string') value = replaceAll(value, "'", "");
+                valuesToInsert += "'" + value + "'";
+            } else {
+                valuesToInsert += value;
+            }
+        }
+
+        return 'INSERT INTO ' + table + ' (' + colsToInsert + ') VALUES (' + valuesToInsert + ')';
+    },
+    update(table, values, where) {
+        let valuesToUpdate = "";
+
+        for (const colName in values) {
+            if (valuesToUpdate !== "") valuesToUpdate += ", ";
+
+            let value = values[colName];
+            if (value !== null) {
+                // Cuando el string contiene ' hace petar la SQL
+                if (typeof value === 'string') value = replaceAll(value, "'", "");
+                valuesToUpdate += "`" + colName + "` = '" + value + "'";
+            } else {
+                valuesToUpdate += "`" + colName + "` = " + value;
+            }
+            
+        }
+
+        return "UPDATE " + table + " SET " + valuesToUpdate + " WHERE (" + this.where(where) + ")";
+    },
+    delete(table, where) {
+        return "DELETE FROM " + table + " WHERE (" + this.where(where) + ")";
+    },
+    where(where) {
+        let whereCondition = "";
+
+        if (typeof where === "string") {
+            whereCondition = where;
+        } else if (typeof where === "object") {
+            for (const key in where) {
+                const value = where[key];
+    
+                if (whereCondition !== "") whereCondition += " AND ";
+                whereCondition += "`" + key + "` = '" + value + "'";
+            }
+        }
+    
+        return whereCondition;
+    },
+    in(column_name, array) {
+        let text = "";
+        for (const item of array) {
+            if (text !== "") text += ", ";
+            text += "'" + item + "'";
+        }
+        return column_name + " IN (" + text + ")";
+    },
+};
+
+/**
+ * Replaces all ocurrences of a given string.
+ * @param {*} string 
+ * @param {*} target_value 
+ * @param {*} replace_value 
+ */
+function replaceAll(string, target_value, replace_value) {
+    if (!typeof string === 'string'
+        || !typeof target_value === 'string'
+        || !typeof replace_value === 'string'
+    ) {
+        throw new Error("Must provide 3 string values to this function!");
+    }
+    return string.split(target_value).join(replace_value);
+}
+
+module.exports = MySqlConnection;
